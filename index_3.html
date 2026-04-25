@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<title>VRM Scanner</title>
+<style>
+  :root {
+    --gold: #f5c518;
+    --green: #00e676;
+    --red: #ff5252;
+    --bg: #080810;
+    --surface: #0f0f1c;
+    --surface2: #15152a;
+    --border: #1e1e3a;
+    --text: #e0e0f0;
+    --muted: #555570;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: 'Courier New', monospace; color: var(--text); display: flex; flex-direction: column; }
+
+  #header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 18px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 12px;
+    flex-shrink: 0;
+  }
+  #header-title { font-size: 15px; font-weight: 700; letter-spacing: 3px; color: var(--gold); }
+  #header-sub { font-size: 9px; color: var(--muted); letter-spacing: 2px; }
+  #status-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #333; margin-left: auto; flex-shrink: 0;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  #status-dot.live { background: var(--green); box-shadow: 0 0 10px var(--green); animation: blink 1.2s infinite; }
+  #status-dot.found { background: var(--gold); box-shadow: 0 0 10px var(--gold); }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes plateIn { from{opacity:0;transform:scale(0.85)} to{opacity:1;transform:scale(1)} }
+  @keyframes sweep { 0%{top:0%} 100%{top:100%} }
+  @keyframes flash { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  .screen { display: none; flex: 1; flex-direction: column; align-items: center; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .screen.active { display: flex; }
+
+  /* IDLE */
+  #idle-screen { justify-content: center; padding: 32px 24px; text-align: center; }
+  .idle-icon { font-size: 64px; margin-bottom: 24px; }
+  .idle-title { font-size: 20px; font-weight: 700; color: var(--gold); letter-spacing: 4px; margin-bottom: 14px; }
+  .plate-preview {
+    width: 100%; max-width: 300px; margin: 0 auto 28px;
+    aspect-ratio: 520/111;
+    background: var(--gold);
+    border-radius: 8px; border: 3px solid #000;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 900; letter-spacing: 6px; color: #000;
+    box-shadow: 0 4px 24px rgba(245,197,24,0.25);
+  }
+  .idle-desc { font-size: 13px; color: var(--muted); line-height: 1.9; margin-bottom: 36px; }
+  .btn-primary {
+    background: var(--gold); color: #000; border: none; border-radius: 14px;
+    padding: 17px 48px; font-size: 14px; font-weight: 700; letter-spacing: 3px;
+    font-family: 'Courier New', monospace; cursor: pointer; width: 100%;
+    max-width: 320px; -webkit-appearance: none;
+  }
+  .btn-secondary {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 12px; padding: 13px 32px; font-size: 12px; letter-spacing: 2px;
+    font-family: 'Courier New', monospace; cursor: pointer; width: 100%;
+    max-width: 320px; margin-top: 12px; -webkit-appearance: none;
+  }
+
+  /* CAMERA */
+  #camera-screen { padding: 0; justify-content: flex-start; }
+  #video-container {
+    position: relative; width: 100%; background: #000; flex-shrink: 0; overflow: hidden;
+    height: 52vw; /* fixed height so overlay geometry is always calculable */
+    min-height: 180px; max-height: 56vh;
+  }
+  #video { width: 100%; height: 100%; display: block; object-fit: cover; }
+
+  /* SVG overlay */
+  #overlay-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  /* plate border overlay */
+  #plate-border {
+    position: absolute;
+    pointer-events: none;
+    border: 3px solid var(--gold);
+    border-radius: 8px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.5);
+    z-index: 2;
+  }
+  .pw-corner { position: absolute; width: 22px; height: 22px; }
+  .pw-corner.tl { top: -3px; left: -3px; border-top: 4px solid #fff; border-left: 4px solid #fff; border-radius: 4px 0 0 0; }
+  .pw-corner.tr { top: -3px; right: -3px; border-top: 4px solid #fff; border-right: 4px solid #fff; border-radius: 0 4px 0 0; }
+  .pw-corner.bl { bottom: -3px; left: -3px; border-bottom: 4px solid #fff; border-left: 4px solid #fff; border-radius: 0 0 0 4px; }
+  .pw-corner.br { bottom: -3px; right: -3px; border-bottom: 4px solid #fff; border-right: 4px solid #fff; border-radius: 0 0 4px 0; }
+
+  /* sweep inside plate */
+  #sweep-clip {
+    position: absolute;
+    pointer-events: none;
+    overflow: hidden;
+    border-radius: 6px;
+    z-index: 3;
+  }
+  #sweep {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    box-shadow: 0 0 10px var(--gold);
+    animation: sweep 2s linear infinite;
+  }
+
+  #plate-hint-label {
+    position: absolute;
+    left: 50%; transform: translateX(-50%);
+    font-size: 10px; color: var(--gold); letter-spacing: 2px;
+    pointer-events: none; z-index: 4; white-space: nowrap;
+  }
+
+  #cam-bottom {
+    width: 100%; flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 20px 24px; gap: 12px;
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  #cam-status { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-align: center; min-height: 16px; }
+  #cam-status.scanning { color: var(--gold); }
+  #cam-status.success { color: var(--green); }
+
+  #capture-btn {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: var(--gold); border: 4px solid #fff;
+    box-shadow: 0 0 0 3px var(--gold);
+    cursor: pointer; -webkit-appearance: none;
+    flex-shrink: 0;
+    transition: transform 0.1s, opacity 0.1s;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  #capture-btn:active { transform: scale(0.91); opacity: 0.8; }
+  #capture-btn svg { width: 34px; height: 34px; }
+
+  /* FOUND */
+  #found-screen { padding: 20px 20px 40px; }
+  #found-label { font-size: 11px; color: var(--green); letter-spacing: 3px; text-align: center; margin-bottom: 14px; }
+  #plate-badge {
+    width: 100%; aspect-ratio: 520/111;
+    background: var(--gold); color: #000;
+    font-size: clamp(20px, 7vw, 34px); font-weight: 900; letter-spacing: 8px;
+    border-radius: 10px; border: 3px solid #000;
+    display: flex; align-items: center; justify-content: center;
+    animation: plateIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+    margin-bottom: 12px;
+  }
+  #cropped-preview { width: 100%; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 20px; display: block; }
+  #found-actions { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+
+  /* VALUATING */
+  #valuating-screen { justify-content: center; padding: 32px 24px; text-align: center; }
+  #val-plate {
+    display: inline-block; background: var(--gold); color: #000;
+    font-size: 26px; font-weight: 900; letter-spacing: 6px;
+    padding: 10px 24px; border-radius: 8px; margin-bottom: 32px;
+  }
+  .val-step { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+  .val-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); flex-shrink: 0; }
+  .val-dot.d1 { animation: blink 1s infinite; }
+  .val-dot.d2 { animation: blink 1.3s infinite; }
+  .val-dot.d3 { animation: blink 1.6s infinite; }
+
+  /* RESULT */
+  #result-screen { padding: 16px 16px 40px; }
+  #res-plate {
+    width: 100%; aspect-ratio: 520/111;
+    background: var(--gold); color: #000;
+    font-size: clamp(20px, 7vw, 30px); font-weight: 900; letter-spacing: 6px;
+    border-radius: 8px; border: 3px solid #000;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 6px;
+  }
+  #res-subtitle { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 18px; }
+  #val-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .val-card { background: var(--surface); border-radius: 12px; padding: 14px 8px; text-align: center; border: 1px solid var(--border); }
+  .val-card-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; margin-bottom: 6px; }
+  .val-card-value { font-size: 14px; font-weight: 700; }
+  .val-card.trade .val-card-value { color: var(--red); }
+  .val-card.private .val-card-value { color: var(--gold); }
+  .val-card.retail .val-card-value { color: var(--green); }
+  #details-card { background: var(--surface); border-radius: 14px; border: 1px solid var(--border); padding: 16px; margin-bottom: 16px; }
+  .det-title { font-size: 9px; color: var(--muted); letter-spacing: 2px; margin-bottom: 14px; }
+  .detail-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--surface2); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { font-size: 12px; color: var(--muted); }
+  .detail-val { font-size: 12px; font-weight: 600; color: var(--text); text-align: right; max-width: 60%; }
+  #notes-card { background: var(--surface); border: 1px solid #1e3a2f; border-radius: 12px; padding: 14px; margin-bottom: 18px; }
+  .notes-title { font-size: 9px; color: var(--green); letter-spacing: 2px; margin-bottom: 6px; }
+  #notes-text { font-size: 12px; color: #aaa; line-height: 1.7; }
+
+  /* ERROR */
+  #error-screen { justify-content: center; padding: 32px 24px; text-align: center; }
+  #err-msg { color: var(--red); font-size: 14px; margin-bottom: 28px; line-height: 1.7; }
+
+  canvas { display: none; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div>
+    <div id="header-title">VRM SCANNER</div>
+    <div id="header-sub">UK PLATE RECOGNITION</div>
+  </div>
+  <div id="status-dot"></div>
+  <button onclick="toggleDebug()" style="background:transparent;border:1px solid #222;color:#333;border-radius:4px;padding:3px 7px;font-size:9px;cursor:pointer;font-family:monospace;letter-spacing:1px;margin-left:6px;">DBG</button>
+</div>
+
+<!-- IDLE -->
+<div id="idle-screen" class="screen active">
+  <div class="idle-icon">📷</div>
+  <div class="idle-title">POINT &amp; SCAN</div>
+  <div class="plate-preview">AB12 CDE</div>
+  <div class="idle-desc">
+    Fit the number plate inside the yellow guide.<br/>
+    Tap the camera button to capture,<br/>
+    or wait for auto-scan every 4 seconds.
+  </div>
+  <button class="btn-primary" onclick="startCamera()">START CAMERA</button>
+</div>
+
+<!-- CAMERA -->
+<div id="camera-screen" class="screen">
+  <div id="video-container">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="plate-border">
+      <div class="pw-corner tl"></div>
+      <div class="pw-corner tr"></div>
+      <div class="pw-corner bl"></div>
+      <div class="pw-corner br"></div>
+    </div>
+    <div id="sweep-clip"><div id="sweep"></div></div>
+    <div id="plate-hint-label">ALIGN PLATE INSIDE BOX</div>
+  </div>
+  <div id="cam-bottom">
+    <div id="cam-status">READY — TAP TO CAPTURE</div>
+    <button id="capture-btn" onclick="manualCapture()" aria-label="Capture">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+    </button>
+    <button class="btn-secondary" style="max-width:200px;margin-top:0" onclick="reset()">CANCEL</button>
+  </div>
+</div>
+
+<!-- FOUND -->
+<div id="found-screen" class="screen">
+  <div id="found-label">✓ PLATE DETECTED</div>
+  <div id="plate-badge"></div>
+  <img id="cropped-preview" src="" alt="plate crop"/>
+  <div id="found-actions">
+    <button class="btn-primary" onclick="runValuation()">GET VALUATION →</button>
+    <button class="btn-secondary" onclick="startCamera()">SCAN AGAIN</button>
+  </div>
+</div>
+
+<!-- VALUATING -->
+<div id="valuating-screen" class="screen">
+  <div style="font-size:11px;color:var(--gold);letter-spacing:3px;margin-bottom:20px">GENERATING VALUATION</div>
+  <div id="val-plate"></div>
+  <div class="val-step"><div class="val-dot d1"></div>Identifying vehicle...</div>
+  <div class="val-step"><div class="val-dot d2"></div>Checking market data...</div>
+  <div class="val-step"><div class="val-dot d3"></div>Calculating values...</div>
+</div>
+
+<!-- RESULT -->
+<div id="result-screen" class="screen">
+  <div id="res-plate"></div>
+  <div id="res-subtitle"></div>
+  <div id="val-cards">
+    <div class="val-card trade"><div class="val-card-label">TRADE</div><div class="val-card-value" id="v-trade"></div></div>
+    <div class="val-card private"><div class="val-card-label">PRIVATE</div><div class="val-card-value" id="v-private"></div></div>
+    <div class="val-card retail"><div class="val-card-label">RETAIL</div><div class="val-card-value" id="v-retail"></div></div>
+  </div>
+  <div id="details-card">
+    <div class="det-title">VEHICLE DETAILS</div>
+    <div id="details-rows"></div>
+  </div>
+  <div id="notes-card" style="display:none">
+    <div class="notes-title">NOTES</div>
+    <div id="notes-text"></div>
+  </div>
+  <button class="btn-primary" onclick="reset()">SCAN ANOTHER</button>
+</div>
+
+<!-- ERROR -->
+<div id="error-screen" class="screen">
+  <div style="font-size:52px;margin-bottom:16px">⚠️</div>
+  <div id="err-msg"></div>
+  <button class="btn-primary" onclick="reset()">TRY AGAIN</button>
+</div>
+
+<!-- DEBUG PANEL -->
+<div id="debug-panel" style="display:none;position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,0.92);border-top:1px solid #333;padding:10px;z-index:999;font-family:monospace;font-size:10px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+    <span style="color:#f5c518;letter-spacing:2px;font-size:9px;">DEBUG MODE</span>
+    <button onclick="toggleDebug()" style="background:#333;border:none;color:#aaa;padding:3px 8px;border-radius:4px;font-size:9px;cursor:pointer;">HIDE</button>
+  </div>
+  <img id="debug-crop" style="width:100%;border-radius:4px;border:1px solid #333;margin-bottom:6px;display:block;" alt="crop preview"/>
+  <pre id="debug-log" style="color:#0f0;margin:0;white-space:pre-wrap;font-size:9px;line-height:1.5;"></pre>
+</div>
+
+<canvas id="canvas"></canvas>
+<canvas id="crop-canvas"></canvas>
+
+<script>
+const MODEL = "claude-sonnet-4-20250514";
+const PLATE_RATIO = 520 / 111; // exact UK plate aspect ratio
+
+let mediaStream = null;
+let autoTimer = null;
+let currentVRM = "";
+let croppedB64 = "";
+let isCapturing = false;
+
+// ── screen routing ────────────────────────────────────────────────────────────
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id + '-screen').classList.add('active');
+  const dot = document.getElementById('status-dot');
+  dot.className = '';
+  if (id === 'camera') dot.classList.add('live');
+  if (id === 'found') dot.classList.add('found');
+}
+
+// ── position plate overlay elements ──────────────────────────────────────────
+function positionPlateOverlay() {
+  const container = document.getElementById('video-container');
+  const cw = container.offsetWidth;
+  const ch = container.offsetHeight;
+  if (!cw || !ch) return;
+
+  // plate window: 88% wide, height from exact UK plate ratio
+  const pw = cw * 0.88;
+  const ph = pw / PLATE_RATIO;
+  const px = (cw - pw) / 2;
+  const py = (ch - ph) / 2;
+
+  // plate border
+  const border = document.getElementById('plate-border');
+  border.style.left   = px + 'px';
+  border.style.top    = py + 'px';
+  border.style.width  = pw + 'px';
+  border.style.height = ph + 'px';
+
+  // sweep clip (same position)
+  const clip = document.getElementById('sweep-clip');
+  clip.style.left   = px + 'px';
+  clip.style.top    = py + 'px';
+  clip.style.width  = pw + 'px';
+  clip.style.height = ph + 'px';
+
+  // hint label sits just below the plate box
+  const hint = document.getElementById('plate-hint-label');
+  hint.style.top = (py + ph + 10) + 'px';
+}
+
+// ── camera ────────────────────────────────────────────────────────────────────
+async function startCamera() {
+  stopAll(); isCapturing = false;
+  show('camera');
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    const video = document.getElementById('video');
+    video.srcObject = mediaStream;
+    await video.play();
+    positionPlateOverlay();
+    video.addEventListener('loadedmetadata', positionPlateOverlay, { once: true });
+    setTimeout(positionPlateOverlay, 100);
+    setTimeout(positionPlateOverlay, 400);
+    window.addEventListener('resize', positionPlateOverlay);
+    setStatus('READY — TAP TO CAPTURE OR WAIT FOR AUTO-SCAN', '');
+    autoTimer = setInterval(autoCapture, 4000);
+  } catch(e) {
+    showError('Camera access denied.<br/>Go to <b>Settings → Safari → Camera</b> → Allow, then reload the page.');
+  }
+}
+
+function stopAll() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  window.removeEventListener('resize', positionPlateOverlay);
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('cam-status');
+  el.textContent = msg; el.className = cls || '';
+}
+
+// ── grab cropped plate image ──────────────────────────────────────────────────
+function grabCrop() {
+  const video = document.getElementById('video');
+  if (!video.videoWidth) return null;
+
+  // draw full frame
+  const full = document.getElementById('canvas');
+  full.width = video.videoWidth;
+  full.height = video.videoHeight;
+  full.getContext('2d').drawImage(video, 0, 0);
+
+  // map container coords → video pixel coords (object-fit: cover)
+  const container = document.getElementById('video-container');
+  const cw = container.offsetWidth;
+  const ch = container.offsetHeight;
+  const vAR = video.videoWidth / video.videoHeight;
+  const cAR = cw / ch;
+
+  let scaledW, scaledH, offX, offY;
+  if (vAR > cAR) {
+    scaledH = ch; scaledW = ch * vAR;
+    offX = (scaledW - cw) / 2; offY = 0;
+  } else {
+    scaledW = cw; scaledH = cw / vAR;
+    offX = 0; offY = (scaledH - ch) / 2;
+  }
+
+  const scaleX = video.videoWidth / scaledW;
+  const scaleY = video.videoHeight / scaledH;
+
+  // plate window in container coords
+  const pw = cw * 0.88;
+  const ph = pw / PLATE_RATIO;
+  const px = (cw - pw) / 2;
+  const py = (ch - ph) / 2;
+
+  // map to video pixels
+  const cropX = (px + offX) * scaleX;
+  const cropY = (py + offY) * scaleY;
+  const cropW = pw * scaleX;
+  const cropH = ph * scaleY;
+
+  // render crop at 2× for sharpness
+  const crop = document.getElementById('crop-canvas');
+  crop.width = Math.round(cropW * 2);
+  crop.height = Math.round(cropH * 2);
+  crop.getContext('2d').drawImage(full,
+    Math.round(cropX), Math.round(cropY), Math.round(cropW), Math.round(cropH),
+    0, 0, crop.width, crop.height
+  );
+  return crop.toDataURL('image/jpeg', 0.95).split(',')[1];
+}
+
+// ── capture flow ──────────────────────────────────────────────────────────────
+async function manualCapture() {
+  if (isCapturing) return;
+  const btn = document.getElementById('capture-btn');
+  btn.style.opacity = '0.5';
+  setTimeout(() => btn.style.opacity = '1', 300);
+  await doCapture(true);
+}
+
+async function autoCapture() {
+  if (isCapturing) return;
+  await doCapture(false);
+}
+
+async function doCapture(isManual) {
+  isCapturing = true;
+  setStatus(isManual ? 'CAPTURING...' : 'AUTO-SCANNING...', 'scanning');
+  try {
+    const b64 = grabCrop();
+    if (!b64) { isCapturing = false; setStatus('READY — TAP TO CAPTURE', ''); return; }
+    const vrm = await extractVRM(b64);
+    if (vrm) {
+      stopAll();
+      currentVRM = vrm;
+      croppedB64 = b64;
+      showFound(vrm, b64);
+    } else {
+      if (isManual) {
+        setStatus('NO PLATE FOUND — HOLD STILL & TRY AGAIN', '');
+        setTimeout(() => setStatus('READY — TAP TO CAPTURE', ''), 2500);
+      } else {
+        const t = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        setStatus('SCANNING... ' + t, '');
+      }
+    }
+  } catch(e) {
+    setStatus('ERROR — RETRYING...', '');
+  }
+  isCapturing = false;
+}
+
+// ── debug ────────────────────────────────────────────────────────────────────
+let debugLines = [];
+function dbg(msg) {
+  console.log('[VRM]', msg);
+  debugLines.unshift(new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) + ' ' + msg);
+  if (debugLines.length > 8) debugLines.pop();
+  const el = document.getElementById('debug-log');
+  if (el) el.textContent = debugLines.join('\n');
+}
+
+// ── Claude API ────────────────────────────────────────────────────────────────
+async function callClaude(body) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const errMsg = data?.error?.message || ('API ' + res.status);
+    dbg('API ERROR: ' + errMsg);
+    throw new Error(errMsg);
+  }
+  return data.content?.find(b => b.type === 'text')?.text || '';
+}
+
+async function extractVRM(b64) {
+  const debugImg = document.getElementById('debug-crop');
+  if (debugImg) debugImg.src = 'data:image/jpeg;base64,' + b64;
+  dbg('Sending crop (' + Math.round(b64.length * 0.75 / 1024) + 'KB)...');
+  const text = await callClaude({
+    model: MODEL, max_tokens: 100,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: 'This image shows a UK vehicle number plate region. Extract any registration number visible. UK plates have black characters on yellow (rear) or white (front) background. Be generous — even if partially obscured, give your best reading. Return ONLY JSON: {"vrm":"AB12CDE"} uppercase no spaces. If truly unreadable: {"vrm":null}. Nothing else.' }
+      ]
+    }]
+  });
+  dbg('Response: ' + text.substring(0, 60));
+  try {
+    const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+    dbg('VRM: ' + (parsed.vrm || 'null'));
+    return parsed.vrm || null;
+  } catch(e) {
+    dbg('Parse error: ' + e.message + ' raw=' + text.substring(0,30));
+    return null;
+  }
+}
+
+async function getValuation(vrm) {
+  const text = await callClaude({
+    model: MODEL, max_tokens: 1000,
+    messages: [{
+      role: 'user',
+      content: `UK motor trade valuation for VRM "${vrm}". Return ONLY JSON, no markdown:
+{"make":"","model":"","variant":"","year":2018,"colour":"","engineSize":"","fuelType":"","transmission":"","mileageEstimate":"","motExpiry":"","taxStatus":"","tradeValue":0,"privateValue":0,"retailValue":0,"condition":"","notes":""}`
+    }]
+  });
+  try { return JSON.parse(text.replace(/```json|```/g,'').trim()); }
+  catch { return null; }
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+function showFound(vrm, b64) {
+  document.getElementById('plate-badge').textContent = vrm;
+  document.getElementById('cropped-preview').src = 'data:image/jpeg;base64,' + b64;
+  show('found');
+}
+
+async function runValuation() {
+  show('valuating');
+  document.getElementById('val-plate').textContent = currentVRM;
+  try {
+    const v = await getValuation(currentVRM);
+    if (!v) throw new Error('empty');
+    renderResult(currentVRM, v);
+  } catch(e) {
+    showError('Could not retrieve valuation.<br/>Check your connection and try again.');
+  }
+}
+
+const fmt = n => n ? '£' + Number(n).toLocaleString('en-GB') : '—';
+
+function renderResult(vrm, v) {
+  document.getElementById('res-plate').textContent = vrm;
+  document.getElementById('res-subtitle').textContent = [v.year, v.make, v.model, v.variant].filter(Boolean).join(' ');
+  document.getElementById('v-trade').textContent = fmt(v.tradeValue);
+  document.getElementById('v-private').textContent = fmt(v.privateValue);
+  document.getElementById('v-retail').textContent = fmt(v.retailValue);
+  const rows = [
+    ['Colour', v.colour], ['Engine', v.engineSize], ['Fuel', v.fuelType],
+    ['Gearbox', v.transmission], ['Mileage Est.', v.mileageEstimate],
+    ['MOT Expiry', v.motExpiry], ['Tax', v.taxStatus], ['Condition', v.condition]
+  ];
+  document.getElementById('details-rows').innerHTML = rows
+    .filter(([,val]) => val)
+    .map(([k, val]) => `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${val}</span></div>`)
+    .join('');
+  const nc = document.getElementById('notes-card');
+  if (v.notes) { document.getElementById('notes-text').textContent = v.notes; nc.style.display = 'block'; }
+  else { nc.style.display = 'none'; }
+  show('result');
+}
+
+function showError(msg) {
+  stopAll();
+  document.getElementById('err-msg').innerHTML = msg;
+  show('error');
+}
+
+function reset() {
+  stopAll(); currentVRM = ''; croppedB64 = ''; isCapturing = false;
+  show('idle');
+}
+
+function toggleDebug() {
+  const panel = document.getElementById('debug-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+</body>
+</html>
