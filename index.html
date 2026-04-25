@@ -49,6 +49,22 @@
   .screen { display: none; flex: 1; flex-direction: column; align-items: center; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .screen.active { display: flex; }
 
+  /* API KEY SCREEN */
+  #apikey-screen { justify-content: center; padding: 32px 24px; text-align: center; }
+  .key-icon { font-size: 56px; margin-bottom: 20px; }
+  .key-title { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: 3px; margin-bottom: 10px; }
+  .key-desc { font-size: 12px; color: var(--muted); line-height: 1.8; margin-bottom: 24px; }
+  #api-key-input {
+    width: 100%; max-width: 360px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; color: var(--text); font-size: 12px;
+    font-family: 'Courier New', monospace; letter-spacing: 1px;
+    margin-bottom: 14px; -webkit-appearance: none;
+  }
+  #api-key-input:focus { outline: none; border-color: var(--gold); }
+  .key-note { font-size: 10px; color: var(--muted); margin-top: 10px; line-height: 1.7; }
+  .key-note a { color: var(--gold); }
+
   /* IDLE */
   #idle-screen { justify-content: center; padding: 32px 24px; text-align: center; }
   .idle-icon { font-size: 64px; margin-bottom: 24px; }
@@ -222,8 +238,18 @@
   <button onclick="toggleDebug()" style="background:transparent;border:1px solid #222;color:#333;border-radius:4px;padding:3px 7px;font-size:9px;cursor:pointer;font-family:monospace;letter-spacing:1px;margin-left:6px;">DBG</button>
 </div>
 
+<!-- API KEY -->
+<div id="apikey-screen" class="screen">
+  <div class="key-icon">🔑</div>
+  <div class="key-title">API KEY</div>
+  <div class="key-desc">Enter your Anthropic API key to use<br/>the VRM scanner. It is stored only<br/>in this browser session.</div>
+  <input id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"/>
+  <button class="btn-primary" onclick="saveApiKey()">CONTINUE →</button>
+  <div class="key-note">Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br/>Your key never leaves your device.</div>
+</div>
+
 <!-- IDLE -->
-<div id="idle-screen" class="screen active">
+<div id="idle-screen" class="screen">
   <div class="idle-icon">📷</div>
   <div class="idle-title">POINT &amp; SCAN</div>
   <div class="plate-preview">AB12 CDE</div>
@@ -233,6 +259,7 @@
     or wait for auto-scan every 4 seconds.
   </div>
   <button class="btn-primary" onclick="startCamera()">START CAMERA</button>
+  <button class="btn-secondary" style="margin-top:10px;font-size:10px;opacity:0.5" onclick="show('apikey')">CHANGE API KEY</button>
 </div>
 
 <!-- CAMERA -->
@@ -322,6 +349,7 @@
 
 <script>
 const MODEL = "claude-sonnet-4-20250514";
+let apiKey = '';
 const PLATE_RATIO = 520 / 111; // exact UK plate aspect ratio
 
 let mediaStream = null;
@@ -329,6 +357,30 @@ let autoTimer = null;
 let currentVRM = "";
 let croppedB64 = "";
 let isCapturing = false;
+
+// ── api key ──────────────────────────────────────────────────────────────────
+function saveApiKey() {
+  const val = document.getElementById('api-key-input').value.trim();
+  if (!val.startsWith('sk-ant-')) {
+    document.getElementById('api-key-input').style.borderColor = 'var(--red)';
+    setTimeout(() => document.getElementById('api-key-input').style.borderColor = 'var(--border)', 1500);
+    return;
+  }
+  apiKey = val;
+  sessionStorage.setItem('vrm_key', val);
+  show('idle');
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  const stored = sessionStorage.getItem('vrm_key');
+  if (stored && stored.startsWith('sk-ant-')) {
+    apiKey = stored;
+    show('idle');
+  } else {
+    show('apikey');
+  }
+});
 
 // ── screen routing ────────────────────────────────────────────────────────────
 function show(id) {
@@ -517,6 +569,8 @@ async function callClaude(body) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify(body)
